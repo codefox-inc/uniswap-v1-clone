@@ -1,5 +1,5 @@
 //SPDX-License-Identifier: Unlicense
-pragma solidity ^0.8.0;
+pragma solidity 0.8.18;
 
 import '@openzeppelin/contracts/token/ERC20/ERC20.sol';
 import '@openzeppelin/contracts/token/ERC20/IERC20.sol';
@@ -27,6 +27,7 @@ contract Exchange is ERC20 {
 
     // 流動性を追加する関数、返り値はもらったLPトークンの量
     function addLiquidity(uint256 _tokenAmount) public payable returns (uint256) {
+        // payableだからethも送ることができる
         if (getReserve() == 0) {
             // もしtokenのリザーブが0の場合、新たなプールとして扱う
             IERC20 token = IERC20(tokenAddress); // トークンのインスタンスを作る
@@ -44,7 +45,7 @@ contract Exchange is ERC20 {
             require(_tokenAmount >= tokenAmount, 'insufficient token amount');
 
             IERC20 token = IERC20(tokenAddress); // トークンのインスタンスを作る
-            token.transferFrom(msg.sender, address(this), tokenAmount);
+            token.transferFrom(msg.sender, address(this), tokenAmount); // トークンをコントラクトに送る
 
             uint256 liquidity = (msg.value * totalSupply()) / ethReserve;
             _mint(msg.sender, liquidity); // LPトークンをmint
@@ -53,7 +54,7 @@ contract Exchange is ERC20 {
         }
     }
 
-    // 流動性を削除する関数、返り値はETHとトークンの量
+    // 流動性をリムーブする関数、返り値はETHとトークンの量
     function removeLiquidity(uint256 _amount) public returns (uint256, uint256) {
         require(_amount > 0, 'invalid amount'); // 0より大きい量を指定する必要がある
 
@@ -73,6 +74,7 @@ contract Exchange is ERC20 {
         return IERC20(tokenAddress).balanceOf(address(this));
     }
 
+    // helper関数
     function getTokenAmount(uint256 _ethSold) public view returns (uint256) {
         require(_ethSold > 0, 'ethSold is too small');
 
@@ -81,6 +83,7 @@ contract Exchange is ERC20 {
         return getAmount(_ethSold, address(this).balance, tokenReserve);
     }
 
+    // helper関数
     function getEthAmount(uint256 _tokenSold) public view returns (uint256) {
         require(_tokenSold > 0, 'tokenSold is too small');
 
@@ -89,15 +92,17 @@ contract Exchange is ERC20 {
         return getAmount(_tokenSold, tokenReserve, address(this).balance);
     }
 
+    // eth -> erc20 token 交換 private関数
     function ethToToken(uint256 _minTokens, address recipient) private {
-        uint256 tokenReserve = getReserve();
-        uint256 tokensBought = getAmount(msg.value, address(this).balance - msg.value, tokenReserve);
+        uint256 tokenReserve = getReserve(); // トークンのリザーブを取得
+        uint256 tokensBought = getAmount(msg.value, address(this).balance - msg.value, tokenReserve); // トークンの量を計算
 
-        require(tokensBought >= _minTokens, 'insufficient output amount');
+        require(tokensBought >= _minTokens, 'insufficient output amount'); // 最小のトークンの量を満たしているかチェック
 
-        IERC20(tokenAddress).transfer(recipient, tokensBought);
+        IERC20(tokenAddress).transfer(recipient, tokensBought); // トークンをrecipientへ送る
     }
 
+    // eth -> erc20 token交換
     function ethToTokenTransfer(uint256 _minTokens, address _recipient) public payable {
         ethToToken(_minTokens, _recipient);
     }
@@ -106,39 +111,42 @@ contract Exchange is ERC20 {
         ethToToken(_minTokens, msg.sender);
     }
 
+    // erc20 token -> eth 交換　private関数
     function tokenToEthSwap(uint256 _tokensSold, uint256 _minEth) public {
-        uint256 tokenReserve = getReserve();
-        uint256 ethBought = getAmount(_tokensSold, tokenReserve, address(this).balance);
+        uint256 tokenReserve = getReserve(); // トークンのリザーブを取得
+        uint256 ethBought = getAmount(_tokensSold, tokenReserve, address(this).balance); // 交換するETHの量を計算
 
-        require(ethBought >= _minEth, 'insufficient output amount');
+        require(ethBought >= _minEth, 'insufficient output amount'); // 最小のETHの量を満たしているかチェック
 
-        IERC20(tokenAddress).transferFrom(msg.sender, address(this), _tokensSold);
-        payable(msg.sender).transfer(ethBought);
+        IERC20(tokenAddress).transferFrom(msg.sender, address(this), _tokensSold); // トークンをコントラクトに送る
+        payable(msg.sender).transfer(ethBought); // ETHをcallerへ送る
     }
 
+    // erc20 をerc20 に交換する関数
     function tokenToTokenSwap(uint256 _tokensSold, uint256 _minTokensBought, address _tokenAddress) public {
-        address exchangeAddress = IFactory(factoryAddress).getExchange(_tokenAddress);
-        require(exchangeAddress != address(this) && exchangeAddress != address(0), 'invalid exchange address');
+        address exchangeAddress = IFactory(factoryAddress).getExchange(_tokenAddress); // factoryからtokenの該当するexchangeのアドレスを取得
+        require(exchangeAddress != address(this) && exchangeAddress != address(0), 'invalid exchange address'); // exchangeのアドレスが有効かチェック→自分自身のアドレスでないこと、ゼロアドレスでないこと
 
-        uint256 tokenReserve = getReserve();
-        uint256 ethBought = getAmount(_tokensSold, tokenReserve, address(this).balance);
+        uint256 tokenReserve = getReserve(); // tokenリザーbyをゲット
+        uint256 ethBought = getAmount(_tokensSold, tokenReserve, address(this).balance); // 当Exchangeコントラクトにて交換するETHの量を計算
 
-        IERC20(tokenAddress).transferFrom(msg.sender, address(this), _tokensSold);
+        IERC20(tokenAddress).transferFrom(msg.sender, address(this), _tokensSold); // トークンをコントラクトに送る
 
-        IExchange(exchangeAddress).ethToTokenTransfer{value: ethBought}(_minTokensBought, msg.sender);
+        IExchange(exchangeAddress).ethToTokenTransfer{value: ethBought}(_minTokensBought, msg.sender); // _tokenAddressのexchangeにて交換を行う、ETHをそのExchangeへ送って、ethToTokenTransferを呼び出す
     }
 
+    // 「基本原理」に則ってトークンの量を計算する（手数料1%を考慮）
     function getAmount(
-        uint256 inputAmount,
-        uint256 inputReserve,
-        uint256 outputReserve
+        uint256 inputAmount, // 入れるトークン量
+        uint256 inputReserve, // 入れるトークンのリザーブ量
+        uint256 outputReserve // もらうトークンのリザーブ量
     ) private pure returns (uint256) {
-        require(inputReserve > 0 && outputReserve > 0, 'invalid reserves');
+        require(inputReserve > 0 && outputReserve > 0, 'invalid reserves'); // リザーブが0より大きいかチェック
 
-        uint256 inputAmountWithFee = inputAmount * 99;
-        uint256 numerator = inputAmountWithFee * outputReserve;
-        uint256 denominator = (inputReserve * 100) + inputAmountWithFee;
+        uint256 inputAmountWithFee = inputAmount * 99; // トークンの量に手数料を乗算
+        uint256 numerator = inputAmountWithFee * outputReserve; // 分子を計算
+        uint256 denominator = (inputReserve * 100) + inputAmountWithFee; // 分母を計算
 
-        return numerator / denominator;
+        return numerator / denominator; // 計算結果
     }
 }
